@@ -1,8 +1,12 @@
 namespace Cali.Syntax
 {
-    public class TypeReferenceSyntax
+    public class TypeReferenceSyntax : IStatementSyntax
     {
-        public string TypeName { get; }
+        public string TypeName { get; set; }
+
+        public TypeReferenceSyntax() : this("")
+        {
+        }
 
         public TypeReferenceSyntax(string typeName)
         {

@@ -2,21 +2,23 @@ using System.Collections.Generic;
 
 namespace Cali.Syntax
 {
-    public class CompileUnitSyntax : IStatementSyntax
+    public class CompileUnitSyntax : ICommentContainerSyntax, IDeclarationContainerSyntax
     {
-        public CompileUnitSyntax() : this(null,
+        public CompileUnitSyntax() : this(new NamespaceDeclarationSyntax(), 
         new List<FunctionDeclarationSyntax>(),
         new List<ClassDeclarationSyntax>())
         {
         }
 
-        public IList<FunctionDeclarationSyntax> FunctionDeclarationList { get; }
-        public IList<ClassDeclarationSyntax> ClassDeclarationSyntaxList { get; }
-        public NamespaceDeclarationSyntax? NamespaceDeclaration { get; }
+        public ICollection<FunctionDeclarationSyntax> FunctionDeclarationList { get; }
+        public ICollection<ClassDeclarationSyntax> ClassDeclarationSyntaxList { get; }
+        public ICollection<CommentSyntax> Comments { get; } = new List<CommentSyntax>();
+        public NamespaceDeclarationSyntax NamespaceDeclaration { get; }
+        public ICollection<NamespaceImportSyntax> NamespaceImports { get; } = new List<NamespaceImportSyntax>();
 
-        public CompileUnitSyntax(NamespaceDeclarationSyntax? namespaceDeclaration,
-            IList<FunctionDeclarationSyntax> funcDeclarationList,
-            IList<ClassDeclarationSyntax> classDeclarationSyntaxList)
+        public CompileUnitSyntax(NamespaceDeclarationSyntax namespaceDeclaration,
+            ICollection<FunctionDeclarationSyntax> funcDeclarationList,
+            ICollection<ClassDeclarationSyntax> classDeclarationSyntaxList)
         {
             NamespaceDeclaration = namespaceDeclaration;
             FunctionDeclarationList = funcDeclarationList;

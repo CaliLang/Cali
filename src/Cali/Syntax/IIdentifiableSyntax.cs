@@ -1,6 +1,6 @@
 namespace Cali.Syntax
 {
-    public interface IIdentifierOwner
+    public interface IIdentifiableSyntax : IStatementSyntax
     {
         string Identifier { get; }
     }

@@ -13,13 +13,13 @@ namespace Cali.Syntax
 
         public static FunctionDeclarationSyntax FunctionDeclarationSyntax(string name,
             DeclarationModifierSyntax modifiers,
-            IEnumerable<ParameterDeclarationSyntax> parameters,
-            TypeReferenceSyntax returnType, IList<IStatementSyntax> statements)
+            ICollection<ParameterDeclarationSyntax> parameters,
+            TypeReferenceSyntax returnType, ICollection<IStatementSyntax> statements)
         {
             return new FunctionDeclarationSyntax(name, modifiers, parameters, returnType);
         }
 
-        public static CompileUnitSyntax CompileUnitSyntax(NamespaceDeclarationSyntax? namespaceDeclarationSyntax,
+        public static CompileUnitSyntax CompileUnitSyntax(NamespaceDeclarationSyntax namespaceDeclarationSyntax,
             IList<FunctionDeclarationSyntax> funcDeclarationSyntaxList,
             IList<ClassDeclarationSyntax> classDeclarationSyntaxList)
         {
@@ -42,7 +42,11 @@ namespace Cali.Syntax
         public static ParameterDeclarationSyntax ParameterDeclarationSyntax(string parameterName,
             TypeReferenceSyntax typeReference)
         {
-            return new ParameterDeclarationSyntax(parameterName, typeReference);
+            return new ParameterDeclarationSyntax()
+            {
+                Identifier = parameterName,
+                Type = typeReference
+            };
         }
 
         public static GenericTypeReferenceSyntax GenericTypeReferenceSyntax(string typeName,

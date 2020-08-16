@@ -2,20 +2,30 @@ using System.Collections.Generic;
 
 namespace Cali.Syntax
 {
-    public class FunctionDeclarationSyntax
+    public class FunctionDeclarationSyntax : ITypedSyntax
     {
-        public string Name { get; }
-        public IEnumerable<ParameterDeclarationSyntax> Parameters { get; }
-        public TypeReferenceSyntax ReturnType { get; }
+        public string Name { get; set; }
+        public DeclarationModifierSyntax Modifiers { get; set; }
+        public ICollection<ParameterDeclarationSyntax> Parameters { get; }
+        public TypeReferenceSyntax Type { get; }
+
+        public FunctionDeclarationSyntax() : this("", 
+            new DeclarationModifierSyntax(), 
+            new List<ParameterDeclarationSyntax>(),
+            SyntaxFactory.UnitTypeReference)
+        {
+        }
 
         public FunctionDeclarationSyntax(string name,
             DeclarationModifierSyntax modifiers,
-            IEnumerable<ParameterDeclarationSyntax> parameters,
+            ICollection<ParameterDeclarationSyntax> parameters,
             TypeReferenceSyntax returnType)
         {
             Name = name;
+            Modifiers = modifiers;
             Parameters = parameters;
-            ReturnType = returnType;
+            Type = returnType;
         }
+
     }
 }

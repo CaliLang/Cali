@@ -19,7 +19,7 @@ namespace Cali.Parser
     {
         private readonly StreamReader _reader;
         private readonly Stack<LexerMode> _modeStack = new Stack<LexerMode>();
-        private readonly bool shouldDisposeReader;
+        private readonly bool _shouldDisposeReader;
         private Token? _peekedToken;
 
         public Lexer(StreamReader reader)
@@ -30,7 +30,7 @@ namespace Cali.Parser
 
         public Lexer(string code)
         {
-            shouldDisposeReader = true;
+            _shouldDisposeReader = true;
             _reader = new StreamReader(new MemoryStream(Encoding.UTF8.GetBytes(code)));
             _modeStack.Push(LexerMode.CompileUnit);
         }
@@ -119,13 +119,16 @@ namespace Cali.Parser
                     }
                 }
 
+                TokenPosition++;
                 return token;
             }
         }
 
+        public int TokenPosition { get; private set; }
+
         public void Dispose()
         {
-            if (shouldDisposeReader)
+            if (_shouldDisposeReader)
                 _reader?.Dispose();
         }
 

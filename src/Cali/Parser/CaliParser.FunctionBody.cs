@@ -6,6 +6,17 @@ namespace Cali.Parser
 {
     public partial class CaliParser
     {
+        private void FunctionParameterDecl(ParsingState<FunctionDeclarationSyntax> parentFunc)
+        {
+            // parentFunc.ReadAndFork(
+            //     p => p.Parameters,
+            //     decl =>
+            //     {
+            //         // decl.Expect()
+            //     },
+            //     p => p.NextToken().Descriptor == TokenDescriptor.Comma);
+        }
+
         private static IList<IStatementSyntax> ParseMethodBody(Lexer lexer)
         {
             try

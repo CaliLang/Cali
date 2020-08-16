@@ -4,7 +4,7 @@ using Cali.Parser;
 
 namespace Cali.Syntax
 {
-    public class DeclarationModifierSyntax
+    public class DeclarationModifierSyntax : IStatementSyntax
     {
         public DeclarationModifier Modifier { get; private set; }
 

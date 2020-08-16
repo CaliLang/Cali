@@ -1,40 +1,14 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Cali.Syntax;
-using Cali.Utils;
 
 namespace Cali.Parser
 {
     public partial class CaliParser
     {
-        private readonly List<DeclarationModifier> modifiersForFunction = new List<DeclarationModifier>
-        {
-            // Access modifiers
-            DeclarationModifier.Public,
-            DeclarationModifier.Protected,
-            DeclarationModifier.Private,
-            DeclarationModifier.Internal, // <-- this is the default
-
-            // Other modifiers
-            DeclarationModifier.Override,
-            DeclarationModifier.Final
-        };
-
-        private readonly List<DeclarationModifier> modifiersForClass = new List<DeclarationModifier>
-        {
-            // Access modifiers
-            DeclarationModifier.Public,
-            DeclarationModifier.Protected, // <-- not in top level
-            DeclarationModifier.Private, // to current scope (file or class - if nested)
-            DeclarationModifier.Internal, // <-- this is the default
-
-            // Other modifiers
-            DeclarationModifier.Abstract,
-            DeclarationModifier.Final
-        };
-
-        public CompileUnitSyntax ParseFile(string filePath, ParserOptions? options = null)
+        public CompileUnitSyntax ParseFile(string filePath, ParseOptions? options = null)
         {
             using var reader = new StreamReader(new FileStream(filePath, FileMode.Open, FileAccess.Read));
             var lexer = new Lexer(reader);
@@ -42,321 +16,308 @@ namespace Cali.Parser
             return ParseCompileUnit(lexer);
         }
 
-        public CompileUnitSyntax ParseString(string code, ParserOptions? options = null)
+        public CompileUnitSyntax ParseString(string code, ParseOptions? options = null)
         {
             var lexer = new Lexer(code);
 
             return ParseCompileUnit(lexer);
         }
-
-        private CompileUnitSyntax ParseCompileUnit(Lexer lexer)
+        
+        private ParsingState<T> ParseInto<T>(Lexer lexer) where T : IStatementSyntax, new()
         {
-            NamespaceDeclarationSyntax? namespaceDeclarationSyntax = null;
-            var funcDeclarationSyntaxList = new List<FunctionDeclarationSyntax>();
-            var classDeclarationSyntaxList = new List<ClassDeclarationSyntax>();
+            return new ParsingState<T>(lexer);
+        }
 
-            DeclarationModifierSyntax declModifiers = SyntaxFactory.ModifierSyntax();
-            while (true)
+        private void Comments<T>(ParsingState<T> state) where T : ICommentContainerSyntax, new()
+        {
+        }
+
+        private void LineBreaks<T>(ParsingState<T> state) where T : ICommentContainerSyntax, new()
+        {
+            state.WhenNextTokenIs(TokenDescriptor.LineBreak, it => it.Read());
+        }
+
+        private void TypeReference(ParsingState<TypeReferenceSyntax> state)
+        {
+            state.Expect(TokenDescriptor.Identifier, (syntax, token) =>
+                syntax.TypeName = token.Value);
+        }
+
+        public List<DeclarationModifier> ModifiersForFunction => modifiersForFunction;
+
+        private void DeclModifiers<TDeclType>(ParsingState<TDeclType> state)
+            where TDeclType : IDeclarationContainerSyntax, new()
+        {
+            state.WhenNextTokenIs(new List<TokenDescriptor>
             {
-                // first we should expect the namespace declaration
-                var peekedToken = lexer.PeekNextRelevantToken(true);
-                if (peekedToken.Is(TokenDescriptor.EndOfFile))
+                TokenDescriptor.PublicKeyword,
+                TokenDescriptor.PrivateKeyword,
+                TokenDescriptor.ProtectedKeyword,
+                TokenDescriptor.InternalKeyword,
+                TokenDescriptor.OverrideKeyword,
+                TokenDescriptor.AbstractKeyword
+            }, it =>
+            {
+                it.ApplyToFloatingSyntax<DeclarationModifierSyntax>(
+                    (decl, tok) => decl.Append(tok.Descriptor));
+            });
+        }
+    }
+
+    internal class ParsingState<T> where T : IStatementSyntax, new()
+    {
+        private readonly Lexer _lexer;
+        private Stack<IStatementSyntax> _floatingSyntaxStack = new Stack<IStatementSyntax>();
+
+        public T Syntax { get; private set; }
+
+        public ParsingState(Lexer lexer)
+        {
+            _lexer = lexer;
+            Syntax = new T();
+        }
+
+        /// <summary>
+        /// Will parse using these delegates until none of them successfully parsed anything
+        /// </summary>
+        public ParsingState<T> AnyNumberOf(params ParseDelegate<T>[] delegates)
+        {
+            // if the tokens read have changed, that means something was read. Therefore keep going
+            var startingPosition = _lexer.TokenPosition;
+            var prevPosition = -1;
+            while (startingPosition != prevPosition)
+            {
+                foreach (var parseDelegate in delegates)
                 {
-                    break;
+                    parseDelegate(this);
                 }
 
-                if (peekedToken.Descriptor == TokenDescriptor.NamespaceKeyword)
-                {
-                    if (namespaceDeclarationSyntax == null)
-                    {
-                        namespaceDeclarationSyntax = ParseNamespaceDeclarationSyntax(lexer);
-                    }
-                    else
-                    {
-                        throw new CaliParseException("Duplicate namespace declaration found", peekedToken);
-                    }
-                }
-                else
-                {
-                    if (IsDeclModifier(peekedToken.Descriptor))
-                    {
-                        ParseDeclarationModifiers(lexer, declModifiers);
-                        peekedToken = lexer.PeekNextRelevantToken();
-                    }
-
-                    var tokenDescriptor = peekedToken.Descriptor;
-                    if (tokenDescriptor == TokenDescriptor.FunctionKeyword)
-                    {
-                        funcDeclarationSyntaxList.Add(ParseFuncDeclarationSyntax(lexer, declModifiers));
-                    }
-                    else if (tokenDescriptor == TokenDescriptor.ClassKeyword)
-                    {
-                        classDeclarationSyntaxList.Add(ParseClassDeclarationSyntax(lexer, declModifiers));
-                    }
-                    else
-                    {
-                        throw new CaliParseException($"Unexpected token '{peekedToken.Value}'", peekedToken);
-                    }
-                }
+                prevPosition = startingPosition;
+                startingPosition = _lexer.TokenPosition;
             }
 
-            return SyntaxFactory.CompileUnitSyntax(
-                namespaceDeclarationSyntax,
-                funcDeclarationSyntaxList,
-                classDeclarationSyntaxList);
+            return this;
         }
 
-        private bool IsDeclModifier(TokenDescriptor tokenDescriptor)
+        /// <summary>
+        /// Will go through these once, without checking whether they read something or not
+        /// </summary>
+        public ParsingState<T> AtMostOne(params ParseDelegate<T>[] delegates)
         {
-            return tokenDescriptor.Kind == TokenKind.Keyword &&
-                   (tokenDescriptor == TokenDescriptor.InternalKeyword ||
-                    tokenDescriptor == TokenDescriptor.PublicKeyword ||
-                    tokenDescriptor == TokenDescriptor.ProtectedKeyword ||
-                    tokenDescriptor == TokenDescriptor.PrivateKeyword ||
-                    tokenDescriptor == TokenDescriptor.AbstractKeyword
-                   );
-        }
-
-        private void ParseDeclarationModifiers(Lexer lexer, DeclarationModifierSyntax syntax)
-        {
-            var modifiers = new List<Token>();
-            Token token;
-            do
+            foreach (var parseDelegate in delegates)
             {
-                token = lexer.GetNextRelevantToken();
-                modifiers.Add(token);
-                token = lexer.PeekNextRelevantToken();
-            } while (IsDeclModifier(token.Descriptor));
-
-            modifiers.ForEach(it => syntax.Append(it.Descriptor));
-        }
-
-        private ClassDeclarationSyntax ParseClassDeclarationSyntax(Lexer lexer,
-            DeclarationModifierSyntax modifiers)
-        {
-            var token = lexer.GetNextRelevantToken();
-            token.ExpectedToBe(TokenDescriptor.ClassKeyword);
-
-            ValidateModifiers(modifiersForClass, modifiers, token);
-
-            token = lexer.GetNextRelevantToken();
-            token.ExpectedToBe(TokenDescriptor.Identifier);
-
-            var name = token.Value;
-
-            token = lexer.PeekNextRelevantToken();
-            if (token.Is(TokenDescriptor.LeftBrace))
-            {
-                lexer.GetNextRelevantToken();
-                // class has a body
-
-                lexer.GetNextRelevantToken(true).ExpectedToBe(TokenDescriptor.RightBrace);
+                parseDelegate(this);
             }
 
-            return SyntaxFactory.ClassDeclarationSyntax(name, modifiers);
+            return this;
+        }
+        
+        public ParsingState<T> AtLeastOne(params TokenDescriptor[] descriptors)
+        {
+            var found = false;
+            if (descriptors.Any(desc => desc == _lexer.PeekToken().Descriptor))
+            {
+                found = true;
+                Read();
+            }
+
+            if (!found)
+            {
+                throw new CaliParseException($"Expecting one of {descriptors} but found {_lexer.PeekToken().Value}", 
+                    _lexer.PeekToken());
+            }
+
+            return this;
+        }
+        
+        public ParsingState<T> ExactlyOne(ParseDelegate<T> action)
+        {
+            action(this);
+            return this;
         }
 
-        private FunctionDeclarationSyntax ParseFuncDeclarationSyntax(Lexer lexer, DeclarationModifierSyntax modifiers)
+        public ParsingState<T> Expect(TokenDescriptor descriptor, Action<ParsingState<T>>? action = null)
         {
-            // expect func or modifier keyword
-            var token = lexer.GetNextRelevantToken();
-            token.ExpectedToBe(TokenDescriptor.FunctionKeyword);
+            if (InvokeIfMatching(descriptor, action)) return this;
 
-            ValidateModifiers(modifiersForFunction, modifiers, token);
+            var actualToken = _lexer.PeekToken();
+            throw new CaliParseException($"Expected '{descriptor.ReportableName}' but found '{actualToken.Value}'", 0,
+                0);
+        }
 
-            token = lexer.GetNextRelevantToken();
-            token.ExpectedToBe(TokenDescriptor.Identifier);
+        public ParsingState<T> WhenNextTokenIs(TokenDescriptor descriptor, Action<ParsingState<T>> action)
+        {
+            // Ignore white spaces
+            InvokeIfMatching(descriptor, action);
 
-            var name = token.Value;
+            return this;
+        }
 
-            lexer.GetNextRelevantToken().ExpectedToBe(TokenDescriptor.LeftParenthesis);
-
-            var parameterDeclarations = ParseParameterList(lexer);
-
-            lexer.GetNextRelevantToken(true).ExpectedToBe(TokenDescriptor.RightParenthesis);
-
-            TypeReferenceSyntax returnType;
-            token = lexer.PeekNextRelevantToken();
-            if (token.Is(TokenDescriptor.Arrow))
+        public ParsingState<T> WhenNextTokenIs(IEnumerable<TokenDescriptor> descriptors, Action<ParsingState<T>> action)
+        {
+            // Ignore white spaces
+            foreach (var descriptor in descriptors)
             {
-                lexer.GetNextRelevantToken();
+                InvokeIfMatching(descriptor, action);
+            }
 
-                // now return type  
-                returnType = ParseTypeReferenceSyntax(lexer);
+            return this;
+        }
+
+        public ParsingState<T> Expect(TokenDescriptor descriptor, Action<T, Token> action)
+        {
+            // Ignore white spaces
+            while (_lexer.PeekToken().Descriptor == TokenDescriptor.Space) _lexer.NextToken();
+
+            if (_lexer.PeekToken().Descriptor == descriptor)
+            {
+                action(Syntax, _lexer.NextToken());
             }
             else
             {
-                returnType = SyntaxFactory.UnitTypeReference;
+                throw new CaliParseException(
+                    $"Expecting '{descriptor.ReportableName}' but found '{_lexer.PeekToken().Value}'", 
+                    _lexer.PeekToken());
             }
 
-            token = lexer.PeekNextRelevantToken();
-            token.ExpectedToBe(TokenDescriptor.LeftBrace); // expect function body
-
-            var statements = ParseMethodBody(lexer);
-
-            return SyntaxFactory.FunctionDeclarationSyntax(
-                name, modifiers, parameterDeclarations, returnType, statements);
+            return this;
         }
-
-        private static IEnumerable<ParameterDeclarationSyntax> ParseParameterList(Lexer lexer)
+        
+        
+        public ParsingState<T> ApplyToFloatingSyntax<TSyntax>(Action<TSyntax, Token> action) where TSyntax: class, IStatementSyntax, new()
         {
-            var parameterList = new List<ParameterDeclarationSyntax>();
-
-            var token = lexer.PeekNextRelevantToken();
-            if (token.IsNot(TokenDescriptor.RightParenthesis))
+            if (!StackHeadIs<TSyntax>())
             {
-                do
-                {
-                    token = lexer.GetNextRelevantToken();
-                    token.ExpectedToBe(TokenDescriptor.Identifier);
-
-                    var paramName = token.Value;
-
-                    // expect colon     'argName: ArgType'
-                    //                     here ^
-
-                    lexer.GetNextRelevantToken().ExpectedToBe(TokenDescriptor.Colon);
-
-                    var typeReference = ParseTypeReferenceSyntax(lexer);
-
-                    var parameter = SyntaxFactory.ParameterDeclarationSyntax(paramName,
-                        typeReference);
-
-                    parameterList.Add(parameter);
-
-                    token = lexer.PeekNextRelevantToken();
-                    if (token.Is(TokenDescriptor.Comma))
-                    {
-                        // there's more parameters
-                        lexer.GetNextRelevantToken();
-                        token = lexer.PeekNextRelevantToken();
-                    }
-                } while (token.IsNot(TokenDescriptor.RightParenthesis));
+                // add value if missing
+                _floatingSyntaxStack.Push(new TSyntax());
             }
 
-            return parameterList;
+            var syntax = (_floatingSyntaxStack.Peek() as TSyntax)!;
+
+            action(syntax, _lexer.NextToken());
+            return this;
         }
 
-        private static TypeReferenceSyntax ParseTypeReferenceSyntax(Lexer lexer)
+        public ParsingState<T> PopSyntax<TSyntax>(Action<T, TSyntax> func) where TSyntax : class
         {
-            var typeName = ParseDottedName(lexer);
-
-            var token = lexer.PeekNextRelevantToken();
-            if (token.Is(TokenDescriptor.LeftAngleBracket))
+            if (StackHeadIs<TSyntax>())
             {
-                lexer.GetNextRelevantToken();
-
-                // this is a generic
-                var genericParameters = new List<TypeReferenceSyntax>();
-                do
-                {
-                    if (token.Is(TokenDescriptor.Comma)) lexer.GetNextRelevantToken();
-
-                    var genericParam = ParseTypeReferenceSyntax(lexer);
-                    genericParameters.Add(genericParam);
-                } while (lexer.PeekNextRelevantToken().Is(TokenDescriptor.Comma));
-
-                lexer.GetNextRelevantToken().ExpectedToBe(TokenDescriptor.RightAngleBracket);
-
-                return SyntaxFactory.GenericTypeReferenceSyntax(typeName, genericParameters);
+                func(Syntax, (_floatingSyntaxStack.Pop() as TSyntax)!);
             }
-
-            return SyntaxFactory.TypeReferenceSyntax(typeName);
+            
+            return this;
+        }
+        
+        public ParsingState<T> MaybePopSyntax<TSyntax>(Action<T, TSyntax> func) where TSyntax : class
+        {
+            return StackHeadIs<TSyntax>() ? PopSyntax(func) : this;
         }
 
-        private NamespaceDeclarationSyntax ParseNamespaceDeclarationSyntax(Lexer lexer)
+        public Token Read()
         {
-            // expect namespace keyword
-            var token = lexer.GetNextRelevantToken();
-            token.ExpectedToBe(TokenDescriptor.NamespaceKeyword);
-
-            var fullNamespaceIdentifier = ParseDottedName(lexer);
-
-            return SyntaxFactory.NamespaceDeclarationSyntax(fullNamespaceIdentifier);
+            return _lexer.NextToken();
         }
 
-        private static void ValidateModifiers(ICollection<DeclarationModifier> validModifiers,
-            DeclarationModifierSyntax modifiers, Token token)
+        public ParsingState<T> ReadAndFork<TChild>(Func<T, TChild> mapper,
+            Action<ParsingState<TChild>> action) where TChild : IStatementSyntax, new()
         {
-            // TODO: complete
-            if (false)
-            {
-                throw new CaliParseException($"Invalid modifier '{modifiers.Modifier}' for class", token);
-            }
+            Read();
+            
+            var childParsingState = new ChildParsingState<TChild, T>(_lexer, this, mapper.Invoke(Syntax));
+            action(childParsingState);
+
+            return this;
         }
 
-        private static string ParseDottedName(Lexer lexer)
+        public ParsingState<T> ReadAndFork<TChild>(Func<T, ICollection<TChild>> mapper, 
+            Action<ParsingState<TChild>> action,
+            Predicate<ParsingState<T>>? repeatWhen = null)
+            where TChild : IStatementSyntax, new()
         {
-            var token = lexer.PeekNextRelevantToken();
-
-            var dottedName = "";
             do
             {
-                token.ExpectedToBe(TokenDescriptor.Identifier);
-                lexer.GetNextRelevantToken(); // commit reading identifier
-                dottedName += token.Value;
+                Read();
+                var childParsingState = new CollectionChildParsingState<TChild, T>(
+                    _lexer, this, mapper.Invoke(Syntax));
+                action(childParsingState);
 
-                token = lexer.PeekNextRelevantToken(ignoreWhitespace: false);
-                if (token.Is(TokenDescriptor.Dot))
-                {
-                    dottedName += lexer.GetNextRelevantToken(ignoreWhitespace: false).Value;
-                    token = lexer.PeekNextRelevantToken(ignoreWhitespace: false);
-                }
-                else
-                {
-                    break;
-                }
-            } while (token.Is(TokenDescriptor.Identifier));
-
-            return dottedName;
-        }
-    }
-
-    public class ParserOptions
-    {
-        public bool Verbose { get; set; }
-    }
-
-    internal static class LexerExtensions
-    {
-        public static Token PeekNextRelevantToken(this Lexer lexer, bool allowLineBreaks = false,
-            bool ignoreWhitespace = true)
-        {
-            return GetNextRelevantTokenInternal(lexer, true, allowLineBreaks, ignoreWhitespace);
+                childParsingState.Join();
+            } while (repeatWhen != null && repeatWhen(this));
+          
+            return this;
         }
 
-        public static Token GetNextRelevantToken(this Lexer lexer, bool allowLineBreaks = false,
-            bool ignoreWhitespace = true)
+        private class ChildParsingState<TChild, TParent> : ParsingState<TChild>
+            where TChild : IStatementSyntax, new()
+            where TParent : IStatementSyntax, new()
         {
-            return GetNextRelevantTokenInternal(lexer, false, allowLineBreaks, ignoreWhitespace);
-        }
+            private readonly ParsingState<TParent> _parent;
 
-        private static Token GetNextRelevantTokenInternal(Lexer lexer, bool peekOnly,
-            bool allowLineBreaks = false,
-            bool ignoreWhitespace = true)
-        {
-            Token nextToken;
-            while (true)
+            internal ChildParsingState(Lexer lexer,
+                ParsingState<TParent> parent,
+                TChild syntax) : base(lexer)
             {
-                nextToken = peekOnly ? lexer.PeekToken() : lexer.NextToken();
+                _parent = parent;
+                Syntax = syntax;
+                this._floatingSyntaxStack = parent._floatingSyntaxStack;
+            }
+        }
 
-                if ((ignoreWhitespace && nextToken.Descriptor == TokenDescriptor.Space) ||
-                    (ignoreWhitespace && nextToken.Descriptor == TokenDescriptor.Tab) ||
-                    nextToken.Descriptor == TokenDescriptor.SingleLineComment ||
-                    (allowLineBreaks && nextToken.Descriptor == TokenDescriptor.LineBreak))
-                {
-                    if (peekOnly)
-                    {
-                        lexer.NextToken();
-                    }
+        private class CollectionChildParsingState<TChild, TParent> : ParsingState<TChild>
+            where TChild : IStatementSyntax, new()
+            where TParent : IStatementSyntax, new()
+        {
+            private readonly ParsingState<TParent> _parent;
+            private readonly ICollection<TChild> _collection;
 
-                    continue;
-                }
-
-                break;
+            internal CollectionChildParsingState(Lexer lexer,
+                ParsingState<TParent> parent,
+                ICollection<TChild> collection) : base(lexer)
+            {
+                _parent = parent;
+                _collection = collection;
+                this._floatingSyntaxStack = parent._floatingSyntaxStack;
             }
 
-            return nextToken;
+            public void Join()
+            {
+                _collection.Add(Syntax);
+            }
+        }
+
+        private bool StackHeadIs<TSyntax>() where TSyntax : class
+        {
+            return _floatingSyntaxStack.Count > 0 && _floatingSyntaxStack.Peek() is TSyntax;
+        }
+        
+        private bool InvokeIfMatching(TokenDescriptor descriptor, Action<ParsingState<T>>? action)
+        {
+            // Ignore white spaces
+            while (_lexer.PeekToken().Descriptor == TokenDescriptor.Space) _lexer.NextToken();
+
+            if (_lexer.PeekToken().Descriptor == descriptor)
+            {
+                action?.Invoke(this);
+                return true;
+            }
+
+            return false;
+        }
+
+        public Token NextToken()
+        {
+            return _lexer.PeekToken();
         }
     }
+
+    internal static class ParsingStateHelpers
+    {
+        public static ParseDelegate<T> ZeroOrMore<T>(ParseDelegate<T> del)
+            where T : IStatementSyntax, new()
+        {
+            return del;
+        }
+    }
+
+    internal delegate void ParseDelegate<T>(ParsingState<T> state) where T : IStatementSyntax, new();
 }

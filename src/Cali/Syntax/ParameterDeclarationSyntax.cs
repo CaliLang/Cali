@@ -1,10 +1,14 @@
 namespace Cali.Syntax
 {
-    public class ParameterDeclarationSyntax
+    public class ParameterDeclarationSyntax : IIdentifiableSyntax, ITypedSyntax
     {
-        public ParameterDeclarationSyntax(string name, TypeReferenceSyntax typeReference)
+        public ParameterDeclarationSyntax()
         {
-            
+            Identifier = "";
+            Type = new TypeReferenceSyntax();
         }
+
+        public string Identifier { get; set; }
+        public TypeReferenceSyntax Type { get; set; }
     }
 }
